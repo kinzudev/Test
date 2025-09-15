@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Brainrot Cases</title>
+  <style>
+    body{font-family:Arial,sans-serif;margin:0;background:#f4f4f4}
+    header{background:#4638f7;color:white;padding:10px;font-size:20px;display:flex;justify-content:space-between;align-items:center}
+    .container{padding:20px}
+    .case{background:white;padding:15px;margin:10px 0;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,.1);text-align:center}
+    .case img{max-width:100px}
+    .btn{padding:5px 10px;border:none;border-radius:4px;cursor:pointer;margin:5px}
+    .btn-open{background:#28a745;color:white}
+    .btn-clear{background:#ccc}
+    #reward-timer{background:white;padding:5px 10px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.2);position:absolute;top:50px;left:20px}
+    .inventory{background:white;padding:15px;margin:20px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+    .inventory h3{margin-top:0}
+    .inventory-items{display:flex;gap:10px;flex-wrap:wrap}
+    .item{display:flex;flex-direction:column;align-items:center}
+    .item img{width:60px;height:60px;object-fit:cover;border-radius:6px}
+    .item span{font-size:14px;text-align:center}
+    /* Panel admin */
+    #adminPanel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.3);z-index:999;width:400px;max-height:90%;overflow:auto}
+    #adminPanel input,#adminPanel select{width:100%;margin:5px 0;padding:5px}
+    #adminPanel h3{margin-top:10px}
+  </style>
+</head>
+<body>
+  <header>
+    <div>Brainrot Cases</div>
+    <div id="coinsDisplay">Monedas: 0</div>
+  </header>
+
+  <div id="reward-timer">
+    <div>Recibes 50 monedas cada 5 minutos</div>
+    <div id="timer"></div>
+  </div>
+
+  <div class="container" id="cases"></div>
+
+  <div class="inventory">
+    <h3>Inventario</h3>
+    <div id="inventoryItems" class="inventory-items"></div>
+  </div>
+
+  <footer style="text-align:center;margin:20px;">Bienvenido a BrainrotCases</footer>
+
+  <!-- Panel admin oculto -->
+  <div id="adminPanel">
+    <h2>Panel Admin</h2>
+    <input type="password" id="adminPass" placeholder="Contraseña">
+    <button onclick="loginAdmin()">Entrar</button>
+    <button onclick="closeAdmin()">Cerrar</button>
+    <div id="adminContent" style="display:none">
+      <h3>Agregar Caja</h3>
+      <input type="text" id="caseName" placeholder="Nombre de la caja">
+      <input type="text" id="caseImage" placeholder="URL imagen de la caja">
+      <input type="number" id="casePrice" placeholder="Precio">
+      <button onclick="addCase()">Agregar Caja</button>
+
+      <h3>Agregar Item a Caja</h3>
+      <select id="itemCaseName"></select>
+      <input type="text" id="itemName" placeholder="Nombre del item">
+      <input type="text" id="itemImage" placeholder="URL imagen del item">
+      <input type="text" id="itemColor" placeholder="Color del texto">
+      <input type="text" id="itemRarity" placeholder="Rareza">
+      <input type="number" id="itemProb" placeholder="Probabilidad">
+      <button onclick="addItem()">Agregar Item</button>
+
+      <h3>Eliminar Caja</h3>
+      <select id="deleteCaseName"></select>
+      <button onclick="deleteCase()">Eliminar Caja</button>
+    </div>
+  </div>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+  <script>
+    // --- Firebase ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyBwj_as6pb5Bg81F9Cl9VWTKkekMM9Exfk",
+      authDomain: "pekora-forum.firebaseapp.com",
+      projectId: "pekora-forum",
+      storageBucket: "pekora-forum.firebasestorage.app",
+      messagingSenderId: "161910967859",
+      appId: "1:161910967859:web:6a28cecaae74b9b7e9dd46",
+      measurementId: "G-BPBTW5KBRK"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // --- Variables locales ---
+    let coins = parseInt(localStorage.getItem("coins")||"100");
+    let inventory = JSON.parse(localStorage.getItem("inventory")||"[]");
+    let allCases = []; // cache para admin
+
+    function updateCoins(){ 
+      document.getElementById("coinsDisplay").textContent = "Monedas: " + coins;
+      localStorage.setItem("coins", coins);
+    }
+
+    // Inventario con items agrupados
+    function renderInventory(){
+      const inv = document.getElementById("inventoryItems");
+      inv.innerHTML = "";
+      const grouped = {};
+      inventory.forEach(it=>{
+        const key = it.name+"|"+it.rarity;
+        if(!grouped[key]){
+          grouped[key] = {...it, cantidad:1};
+        }else{
+          grouped[key].cantidad++;
+        }
+      });
+      Object.values(grouped).forEach(it=>{
+        const div = document.createElement("div");
+        div.className="item";
+        div.innerHTML = `
+          <img src="${it.image}">
+          <span style="color:${it.color}">${it.name}</span>
+          <span>${it.rarity} x${it.cantidad}</span>`;
+        inv.appendChild(div);
+      });
+      localStorage.setItem("inventory", JSON.stringify(inventory));
+    }
+
+    function renderCases(cases){
+      allCases = cases; // guardar para admin
+      const container = document.getElementById("cases");
+      container.innerHTML = "";
+      cases.forEach(c=>{
+        const div = document.createElement("div");
+        div.className="case";
+        div.innerHTML = `
+          <img src="${c.image}" alt="${c.name}">
+          <h3>${c.name}</h3>
+          <p>Precio: <b>${c.price}</b></p>
+          <button class="btn btn-open">Abrir</button>
+          <details><summary>Ver items (${c.items.length})</summary>
+            ${c.items.map(it=>`<div><img src="${it.image}" width="30"> <span style="color:${it.color}">${it.name}</span> (${it.rarity}, ${it.prob}%)</div>`).join("")}
+          </details>
+        `;
+        div.querySelector(".btn-open").onclick=()=>openCase(c);
+        container.appendChild(div);
+      });
+
+      // refrescar selector admin
+      const sel = document.getElementById("itemCaseName");
+      const delSel = document.getElementById("deleteCaseName");
+      sel.innerHTML = ""; delSel.innerHTML = "";
+      cases.forEach(c=>{
+        const opt1 = document.createElement("option");
+        opt1.value = c.id; opt1.textContent = c.name;
+        sel.appendChild(opt1);
+        const opt2 = document.createElement("option");
+        opt2.value = c.id; opt2.textContent = c.name;
+        delSel.appendChild(opt2);
+      });
+    }
+
+    function openCase(c){
+      if(coins<c.price){alert("No tienes suficientes monedas");return;}
+      coins-=c.price; updateCoins();
+      let total=0;
+      c.items.forEach(it=>total+=it.prob);
+      let rnd=Math.random()*total, chosen=null;
+      for(let it of c.items){
+        if(rnd<it.prob){chosen=it;break;}
+        rnd-=it.prob;
+      }
+      if(chosen){ inventory.push(chosen); renderInventory(); alert("Ganaste: "+chosen.name); }
+    }
+
+    // --- Timer 5 min ---
+    let countdown=300;
+    setInterval(()=>{
+      countdown--;
+      if(countdown<=0){
+        coins+=50;
+        updateCoins();
+        countdown=300;
+      }
+      const m=Math.floor(countdown/60), s=countdown%60;
+      document.getElementById("timer").textContent=`${m}:${s.toString().padStart(2,"0")}`;
+    },1000);
+
+    // --- Firestore realtime ---
+    db.collection("cajas").onSnapshot(snap=>{
+      const cases=[];
+      snap.forEach(doc=>cases.push({...doc.data(), id:doc.id}));
+      renderCases(cases);
+    });
+
+    // --- Admin panel ---
+    document.addEventListener("keydown",e=>{
+      if(e.key==="Insert"){
+        document.getElementById("adminPanel").style.display="block";
+      }
+    });
+    function closeAdmin(){
+      document.getElementById("adminPanel").style.display="none";
+    }
+    function loginAdmin(){
+      const pass=document.getElementById("adminPass").value;
+      if(pass==="16042011"){
+        document.getElementById("adminPass").style.display="none";
+        document.querySelector("#adminPanel button").style.display="none";
+        document.getElementById("adminContent").style.display="block";
+      }else{
+        alert("Contraseña incorrecta");
+      }
+    }
+    async function addCase(){
+      const name=document.getElementById("caseName").value;
+      const image=document.getElementById("caseImage").value;
+      const price=parseInt(document.getElementById("casePrice").value);
+      if(!name||!image||!price) return alert("Completa los campos");
+      await db.collection("cajas").add({name,image,price,items:[]});
+      alert("Caja agregada");
+    }
+    async function addItem(){
+      const caseId=document.getElementById("itemCaseName").value;
+      const item={
+        name:document.getElementById("itemName").value,
+        image:document.getElementById("itemImage").value,
+        color:document.getElementById("itemColor").value,
+        rarity:document.getElementById("itemRarity").value,
+        prob:parseInt(document.getElementById("itemProb").value)
+      };
+      if(!caseId||!item.name) return alert("Faltan campos");
+      const ref=db.collection("cajas").doc(caseId);
+      const docSnap=await ref.get();
+      if(!docSnap.exists){alert("No existe esa caja");return;}
+      const caja=docSnap.data();
+      caja.items.push(item);
+      await ref.update(caja);
+      alert("Item agregado");
+    }
+    async function deleteCase(){
+      const caseId=document.getElementById("deleteCaseName").value;
+      if(!caseId) return alert("Selecciona una caja");
+      await db.collection("cajas").doc(caseId).delete();
+      alert("Caja eliminada");
+    }
+
+    // Init
+    updateCoins();
+    renderInventory();
+  </script>
+
+<script>
+  // --- lo que ya tienes arriba sigue igual ---
+  // Aquí solo modificamos la función renderInventory y agregamos venderItem()
+
+  function renderInventory(){
+    const inv = document.getElementById("inventoryItems");
+    inv.innerHTML = "";
+    const grouped = {};
+    inventory.forEach((it,idx)=>{
+      const key = it.name+"|"+it.rarity+"|"+it.image;
+      if(!grouped[key]){
+        grouped[key] = {...it, cantidad:1, indices:[idx]};
+      }else{
+        grouped[key].cantidad++;
+        grouped[key].indices.push(idx);
+      }
+    });
+    Object.values(grouped).forEach(it=>{
+      const div = document.createElement("div");
+      div.className="item";
+      div.innerHTML = `
+        <img src="${it.image}">
+        <span style="color:${it.color}">${it.name}</span>
+        <span>${it.rarity} x${it.cantidad}</span>
+        <button class="btn btn-clear" onclick="venderItem('${it.name}','${it.rarity}','${it.image}')">Vender</button>
+      `;
+      inv.appendChild(div);
+    });
+    localStorage.setItem("inventory", JSON.stringify(inventory));
+  }
+
+  function venderItem(name, rarity, image){
+    // busca primer ítem con ese nombre+rareza+imagen
+    const index = inventory.findIndex(it=>it.name===name && it.rarity===rarity && it.image===image);
+    if(index>-1){
+      inventory.splice(index,1);
+      // precio de venta fijo o calculado
+      let ganancia = 5; // ejemplo fijo: 5 monedas
+      coins += ganancia;
+      updateCoins();
+      renderInventory();
+      alert(`${name} vendido por ${ganancia} monedas`);
+    }
+  }
+</script>
+  
+<!-- Botón de cambio de tema -->
+<button id="themeToggle" style="
+  position: fixed;
+  bottom: 15px;
+  right: 15px;
+  background: #4632ff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: bold;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+">🌙 Tema</button>
+
+<script>
+  const themeToggle = document.getElementById("themeToggle");
+
+  function setTheme(mode) {
+    if (mode === "dark") {
+      document.body.style.background = "#121212";
+      document.body.style.color = "#f5f5f5";
+      document.querySelectorAll(".case, .inventory").forEach(el => {
+        el.style.background = "#1e1e1e";
+        el.style.color = "#f5f5f5";
+      });
+      document.querySelector("header").style.background = "#000000";
+      themeToggle.textContent = "☀️ Tema";
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.body.style.background = "#f5f5f5";
+      document.body.style.color = "#000000";
+      document.querySelectorAll(".case, .inventory").forEach(el => {
+        el.style.background = "white";
+        el.style.color = "#000000";
+      });
+      document.querySelector("header").style.background = "#4632ff";
+      themeToggle.textContent = "🌙 Tema";
+      localStorage.setItem("theme", "light");
+    }
+  }
+
+  // Alternar tema al hacer click
+  themeToggle.addEventListener("click", () => {
+    const current = localStorage.getItem("theme") || "light";
+    setTheme(current === "light" ? "dark" : "light");
+  });
+
+  // Mantener preferencia al recargar
+  window.onload = () => {
+    const saved = localStorage.getItem("theme") || "light";
+    setTheme(saved);
+  };
+</script>
+
+</body>
+</html>
